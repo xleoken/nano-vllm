@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-
 @dataclass
 class SamplingParams:
     temperature: float = 1.0
