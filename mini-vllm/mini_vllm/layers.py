@@ -75,8 +75,8 @@ class Attention:
         
         return x_rot.reshape(batch_size, seq_len, num_heads, head_dim)
 
-    def __call__(self, x: np.ndarray, kv_cache: 'KVCache', layer_idx: int, batch_indices: list, seq_pos: int) -> np.ndarray:
-        """实现自注意力机制，使用KV缓存优化解码过程"""
+    def __call__(self, x: np.ndarray, seq_pos: int) -> np.ndarray:
+        """实现自注意力机制"""
         batch_size, seq_len, hidden_size = x.shape
         
         # 线性投影
@@ -88,34 +88,24 @@ class Attention:
         q = self._apply_rotary_embedding(q, seq_pos)
         k = self._apply_rotary_embedding(k, seq_pos)
         
-        # 更新KV缓存
-        kv_cache.update(layer_idx, batch_indices, 
-                        k.reshape(batch_size, self.num_heads, seq_len, self.head_dim),
-                        v.reshape(batch_size, self.num_heads, seq_len, self.head_dim))
-        
-        # 获取完整的KV缓存
-        cached_k, cached_v = kv_cache.get(layer_idx, batch_indices)
-        cached_seq_len = cached_k.shape[2]
-        
         # 计算注意力得分
         q = q.reshape(batch_size * seq_len, self.num_heads, self.head_dim)
-        k = cached_k.reshape(batch_size * seq_len, self.num_heads, cached_seq_len, self.head_dim)
+        k = k.reshape(batch_size * seq_len, self.num_heads, seq_len, self.head_dim)
         
         # 计算注意力权重
         scores = np.matmul(q[:, :, np.newaxis, :], k.transpose(0, 1, 3, 2)) / np.sqrt(self.head_dim)
-        scores = scores.reshape(batch_size, seq_len, self.num_heads, cached_seq_len)
+        scores = scores.reshape(batch_size, seq_len, self.num_heads, seq_len)
         
-        # 应用因果掩码（仅在训练或处理新序列时需要）
-        if seq_len > 1:
-            mask = np.triu(np.ones((seq_len, cached_seq_len)), k=1) * -1e9
-            scores += mask[np.newaxis, :, np.newaxis, :]
+        # 应用因果掩码
+        mask = np.triu(np.ones((seq_len, seq_len)), k=1) * -1e9
+        scores += mask[np.newaxis, :, np.newaxis, :]
         
         # 应用softmax获取注意力权重
         attn_weights = softmax(scores, axis=-1)
         
         # 计算上下文向量
-        v = cached_v.reshape(batch_size * seq_len, self.num_heads, cached_seq_len, self.head_dim)
-        context = np.matmul(attn_weights.reshape(batch_size * seq_len, self.num_heads, 1, cached_seq_len), v)
+        v = v.reshape(batch_size * seq_len, self.num_heads, seq_len, self.head_dim)
+        context = np.matmul(attn_weights.reshape(batch_size * seq_len, self.num_heads, 1, seq_len), v)
         context = context.reshape(batch_size, seq_len, self.num_heads * self.head_dim)
         
         # 输出投影
@@ -137,12 +127,11 @@ class TransformerLayer:
         self.input_layernorm = RMSNorm(config.hidden_size)
         self.post_attention_layernorm = RMSNorm(config.hidden_size)
 
-    def __call__(self, hidden_states: np.ndarray, kv_cache: 'KVCache', 
-                 layer_idx: int, batch_indices: list, seq_pos: int) -> np.ndarray:
+    def __call__(self, hidden_states: np.ndarray, seq_pos: int) -> np.ndarray:
         # 自注意力块
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.self_attn(hidden_states, kv_cache, layer_idx, batch_indices, seq_pos)
+        hidden_states = self.self_attn(hidden_states, seq_pos)
         hidden_states = residual + hidden_states
         
         # MLP块

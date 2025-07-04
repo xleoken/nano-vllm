@@ -9,11 +9,14 @@ class Tokenizer:
             tokenizer_data = json.load(f)
         self.encoder = tokenizer_data["model"]["vocab"]
         self.decoder = {v: k for k, v in self.encoder.items()}
-        self.pad_token_id = tokenizer_data.get("pad_token_id", 0)
+        
+        # 确保特殊token存在
+        self.unk_token_id = self.encoder.get("<unk>", 0)
         self.eos_token_id = tokenizer_data.get("eos_token_id", 1)
+        self.pad_token_id = tokenizer_data.get("pad_token_id", 0)
 
     def encode(self, text: str) -> List[int]:
-        return [self.encoder.get(c, self.pad_token_id) for c in text]
+        return [self.encoder.get(c, self.unk_token_id) for c in text]
 
     def decode(self, tokens: List[int]) -> str:
         return ''.join([self.decoder.get(t, '') for t in tokens])    
